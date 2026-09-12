@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>我的图片</title>
+<style>
+  body {
+    margin: 0;
+    padding: 20px;
+    background: #111;
+    font-family: system-ui, sans-serif;
+  }
+  .box {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+  .box img {
+    width: 100%;
+    aspect-ratio: 1/1;
+    object-fit: cover;
+    border-radius: 10px;
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<div class="box">
+  <img src="https://public-image.pxb7.com/pxb7-upload/product/api/20260912/larker_cover_1_275f0576-6718-42fa-b95b-2d11401bce31.jpg?x-oss-process=image%2Fresize%2Cw_750%2Fformat%2Cwebp" alt="">
+  
+  <!-- 想加图片，就照着上面这行再复制一行，把 src 换成你的链接 -->
+  
+</div>
+
+</body>
+</html>
