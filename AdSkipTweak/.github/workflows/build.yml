@@ -1,0 +1,42 @@
+name: Build Tweak (dylib only)
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build AdSkipTweak dylib
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Theos
+        uses: theos/setup-theos@v1
+
+      # 注意：按要求 不执行 apt install ldid
+      # theos/setup-theos@v1 已自带工具链（含 ldid），无需额外安装
+
+      - name: Build dylib (no deb packaging)
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        run: |
+          make clean
+          make FINALPACKAGE=1
+
+      - name: Collect dylib
+        run: |
+          mkdir -p output
+          # 从 Theos 构建产物中取出 dylib（release 路径）
+          find .theos/obj -name "AdSkipTweak.dylib" -type f -exec cp {} output/ \;
+          ls -l output/
+
+      - name: Upload dylib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AdSkipTweak.dylib
+          path: output/AdSkipTweak.dylib
+          if-no-files-found: error

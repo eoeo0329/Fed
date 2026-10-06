@@ -1,0 +1,9 @@
+Package: com.yourname.adskiptweak
+Name: AdSkipTweak
+Depends: mobilesubstrate
+Version: 1.0.0
+Architecture: iphoneos-arm64
+Description: 三指长按唤起悬浮控制窗，支持跳过激励广告、广告加速、关闭悬浮窗。
+Maintainer: YourName
+Author: YourName
+Section: Tweaks
