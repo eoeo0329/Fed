@@ -94,7 +94,7 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     self = [super initWithFrame:frame];
     if (self) {
         self.backgroundColor = [UIColor whiteColor];
-        self.layer.cornerRadius = frame.size.height / 2.0;
+        self.layer.cornerRadius = 7;            // 长方形小圆角，非椭圆
         self.layer.shadowColor = [UIColor blackColor].CGColor;
         self.layer.shadowOpacity = 0.18;
         self.layer.shadowOffset = CGSizeMake(0, 2);
@@ -105,7 +105,7 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
         UILabel *label = [[UILabel alloc] initWithFrame:self.bounds];
         label.text = @"eoeo";
         label.textColor = kEOEOBlue;
-        label.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+        label.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
         label.textAlignment = NSTextAlignmentCenter;
         [self addSubview:label];
     }
@@ -186,8 +186,8 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     self.floatWindow.rootViewController = [[UIViewController alloc] init];
     self.floatWindow.rootViewController.view.backgroundColor = [UIColor clearColor];
 
-    // 小长方体（药丸）：宽 84 高 36
-    CGFloat fw = 84, fh = 36;
+    // 小长方形：宽 68 高 28（悬浮窗缩小，面板 UI 不变）
+    CGFloat fw = 68, fh = 28;
     self.floatView = [[EOEOFloatingView alloc] initWithFrame:CGRectMake(bounds.size.width - fw - 14,
                                                                         bounds.size.height/2 - fh/2,
                                                                         fw, fh)];
@@ -225,7 +225,7 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
 
     // App Store 风格卡片
     CGFloat cardW = MIN(bounds.size.width - 40, 340);
-    CGFloat cardH = 280;
+    CGFloat cardH = 200;
     self.panelView = [[UIView alloc] initWithFrame:CGRectMake((bounds.size.width-cardW)/2,
                                                               (bounds.size.height-cardH)/2,
                                                               cardW, cardH)];
@@ -250,10 +250,10 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     subtitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
     [self.panelView addSubview:subtitle];
 
-    // 顶部右侧完成按钮（App Store 风格）
+    // 顶部右侧缩小按钮（App Store 风格）
     UIButton *doneBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     doneBtn.frame = CGRectMake(cardW - 60, 18, 50, 28);
-    [doneBtn setTitle:@"完成" forState:UIControlStateNormal];
+    [doneBtn setTitle:@"缩小" forState:UIControlStateNormal];
     doneBtn.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     [doneBtn setTitleColor:kEOEOBlue forState:UIControlStateNormal];
     [doneBtn addTarget:self action:@selector(dismissPanel) forControlEvents:UIControlEventTouchUpInside];
@@ -293,17 +293,6 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
         [self.panelView addSubview:row];
         rowY += 64;
     }
-
-    // 关闭悬浮窗按钮（App Store 红色 destructive 风格）
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(16, cardH - 64, cardW-32, 48);
-    [closeBtn setTitle:@"关闭悬浮窗" forState:UIControlStateNormal];
-    [closeBtn setTitleColor:[UIColor colorWithRed:1.0 green:0.23 blue:0.19 alpha:1.0] forState:UIControlStateNormal];
-    closeBtn.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    closeBtn.backgroundColor = [UIColor colorWithWhite:0.96 alpha:1.0];
-    closeBtn.layer.cornerRadius = 12;
-    [closeBtn addTarget:self action:@selector(closeFloatWindow) forControlEvents:UIControlEventTouchUpInside];
-    [self.panelView addSubview:closeBtn];
 }
 
 - (void)onSwitchChanged:(UISwitch *)sw {
