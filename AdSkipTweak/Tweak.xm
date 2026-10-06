@@ -1,10 +1,14 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
-#import <MediaPlayer/MediaPlayer.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 
-#pragma mark - 工具：遍历视图/VC 层级
+#pragma mark - 全局开关（开启后持续生效）
+
+static BOOL gSkipAdEnabled  = NO;   // 跳过激励广告
+static BOOL gSpeedAdEnabled = NO;   // 广告加速
+
+#pragma mark - 工具
 
 static void AS_EnumerateViewControllers(UIViewController *vc, void(^block)(UIViewController *vc)) {
     if (!vc || !block) return;
@@ -37,18 +41,15 @@ static UIWindow *AS_KeyWindow(void) {
     return AS_AllWindows().firstObject;
 }
 
-#pragma mark - 广告类名特征
-
 static BOOL AS_IsAdViewController(UIViewController *vc) {
     NSString *cls = NSStringFromClass([vc class]);
     NSArray<NSString *> *keywords = @[
-        @"GAD", @"Reward", @"Interstitial", @"FullScreen", @"Ad",
-        @"ISReward", @"ISInterstitial",        // IronSource
-        @"MARewarded", @"MAInterstitial",       // AppLovin
-        @"UnityAds",                            // Unity
-        @"ADG",                                 // AdMost / ADG
-        @"TPReward", @"TPInterstitial",         // TradPlus
-        @"Mediation", @"VideoAd", @"RewardedAd"
+        @"GAD", @"Reward", @"Interstitial", @"FullScreen",
+        @"ISReward", @"ISInterstitial",
+        @"MARewarded", @"MAInterstitial",
+        @"UnityAds", @"ADG",
+        @"TPReward", @"TPInterstitial",
+        @"Mediation", @"VideoAd", @"RewardedAd", @"OpenAd"
     ];
     for (NSString *kw in keywords) {
         if ([cls rangeOfString:kw options:NSCaseInsensitiveSearch].location != NSNotFound) {
@@ -58,17 +59,36 @@ static BOOL AS_IsAdViewController(UIViewController *vc) {
     return NO;
 }
 
-#pragma mark - AdSkipManager
+static void AS_GrantRewardForAd(UIViewController *vc) {
+    NSString *cls = NSStringFromClass([vc class]);
+    // Google AdMob
+    if ([cls rangeOfString:@"GAD"].location != NSNotFound) {
+        @try {
+            id handler = [vc valueForKey:@"userDidEarnRewardHandler"];
+            if (handler) ((void(*)(id, SEL))objc_msgSend)(handler, @selector(invoke));
+        } @catch(NSException *e) {}
+    }
+    NSArray<NSString *> *sels = @[@"rewardUser", @"grantReward", @"userDidEarnReward", @"didReward", @"reward"];
+    for (NSString *sn in sels) {
+        SEL s = NSSelectorFromString(sn);
+        if ([vc respondsToSelector:s]) {
+            @try { ((void(*)(id, SEL))objc_msgSend)(vc, s); } @catch(NSException *e) {}
+        }
+    }
+}
+
+#pragma mark - AdSkipManager（eoeo 悬浮窗）
 
 @interface AdSkipManager : NSObject
-@property (nonatomic, strong) UIWindow *panelWindow;
-@property (nonatomic, strong) UIView *panelView;
+@property (nonatomic, strong) UIWindow *floatWindow;   // eoeo 常驻悬浮窗
+@property (nonatomic, strong) UIButton *eoeoButton;    // 显示 "eoeo"
+@property (nonatomic, strong) UIView *panelView;       // 展开的开关面板
+@property (nonatomic, assign) BOOL panelExpanded;
 + (instancetype)sharedManager;
-- (void)showPanel;
-- (void)dismissPanel;
-- (void)skipRewardedAd;
-- (void)speedUpAd;
-- (void)closeFloatingWindow;
+- (void)install;
+- (void)togglePanel;
+- (void)closeFloatWindow;
+- (void)toast:(NSString *)msg;
 @end
 
 @implementation AdSkipManager
@@ -80,218 +100,170 @@ static BOOL AS_IsAdViewController(UIViewController *vc) {
     return inst;
 }
 
-- (void)showPanel {
-    if (self.panelWindow) return;
+- (void)install {
+    if (self.floatWindow) return;
 
     UIWindow *keyWin = AS_KeyWindow();
     CGRect bounds = keyWin ? keyWin.bounds : [UIScreen mainScreen].bounds;
 
-    self.panelWindow = [[UIWindow alloc] initWithFrame:bounds];
-    self.panelWindow.windowLevel = UIWindowLevelAlert + 1000;
-    self.panelWindow.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35];
-    self.panelWindow.rootViewController = [[UIViewController alloc] init];
-    self.panelWindow.rootViewController.view.backgroundColor = [UIColor clearColor];
+    self.floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(bounds.size.width - 70,
+                                                                  bounds.size.height/2 - 30,
+                                                                  60, 60)];
+    self.floatWindow.windowLevel = UIWindowLevelAlert + 2000;
+    self.floatWindow.backgroundColor = [UIColor clearColor];
+    self.floatWindow.rootViewController = [[UIViewController alloc] init];
+    self.floatWindow.rootViewController.view.backgroundColor = [UIColor clearColor];
 
-    // 点击背景关闭
-    UITapGestureRecognizer *bgTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissPanel)];
-    [self.panelWindow.rootViewController.view addGestureRecognizer:bgTap];
+    self.eoeoButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.eoeoButton.frame = self.floatWindow.bounds;
+    [self.eoeoButton setTitle:@"eoeo" forState:UIControlStateNormal];
+    [self.eoeoButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.eoeoButton.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+    self.eoeoButton.backgroundColor = [UIColor colorWithRed:0.10 green:0.55 blue:0.95 alpha:0.9];
+    self.eoeoButton.layer.cornerRadius = 30;
+    self.eoeoButton.layer.borderWidth = 1.5;
+    self.eoeoButton.layer.borderColor = [UIColor whiteColor].CGColor;
+    self.eoeoButton.showsTouchWhenHighlighted = YES;
+    [self.eoeoButton addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
+    [self.floatWindow.rootViewController.view addSubview:self.eoeoButton];
 
-    // 面板
-    CGFloat panelW = 260;
-    CGFloat panelH = 220;
-    self.panelView = [[UIView alloc] initWithFrame:CGRectMake((bounds.size.width - panelW)/2,
-                                                              (bounds.size.height - panelH)/2,
-                                                              panelW, panelH)];
-    self.panelView.backgroundColor = [UIColor colorWithRed:0.12 green:0.12 blue:0.14 alpha:0.96];
-    self.panelView.layer.cornerRadius = 16;
-    self.panelView.layer.borderWidth = 1;
-    self.panelView.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.15].CGColor;
-    [self.panelWindow.rootViewController.view addSubview:self.panelView];
+    // 拖拽
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPan:)];
+    [self.eoeoButton addGestureRecognizer:pan];
 
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 16, panelW, 24)];
-    title.text = @"广告控制中心";
-    title.textColor = [UIColor whiteColor];
-    title.font = [UIFont boldSystemFontOfSize:17];
-    title.textAlignment = NSTextAlignmentCenter;
-    [self.panelView addSubview:title];
-
-    NSArray<NSString *> *titles = @[@"跳过激励广告", @"广告加速", @"关闭悬浮窗"];
-    NSArray<UIColor *> *colors = @[
-        [UIColor colorWithRed:0.20 green:0.78 blue:0.45 alpha:1.0],
-        [UIColor colorWithRed:0.95 green:0.65 blue:0.15 alpha:1.0],
-        [UIColor colorWithRed:0.90 green:0.30 blue:0.30 alpha:1.0]
-    ];
-    SEL actions[3] = { @selector(skipRewardedAd), @selector(speedUpAd), @selector(closeFloatingWindow) };
-
-    CGFloat btnH = 44;
-    CGFloat gap = 12;
-    CGFloat startY = 52;
-    for (NSInteger i = 0; i < 3; i++) {
-        UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-        btn.frame = CGRectMake(20, startY + i*(btnH+gap), panelW - 40, btnH);
-        [btn setTitle:titles[i] forState:UIControlStateNormal];
-        [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        btn.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-        btn.backgroundColor = colors[i];
-        btn.layer.cornerRadius = 10;
-        [btn addTarget:self action:actions[i] forControlEvents:UIControlEventTouchUpInside];
-        [self.panelView addSubview:btn];
-    }
-
-    self.panelWindow.hidden = NO;
+    self.floatWindow.hidden = NO;
     if (@available(iOS 13.0, *)) {
         for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
             if (s.activationState == UISceneActivationStateForegroundActive && [s isKindOfClass:[UIWindowScene class]]) {
-                self.panelWindow.windowScene = (UIWindowScene *)s;
+                self.floatWindow.windowScene = (UIWindowScene *)s;
                 break;
             }
         }
     }
-    [self.panelWindow makeKeyAndVisible];
 }
 
-- (void)dismissPanel {
-    [UIView animateWithDuration:0.2 animations:^{
-        self.panelView.alpha = 0;
-    } completion:^(BOOL f){
-        self.panelWindow.hidden = YES;
-        self.panelWindow = nil;
+- (void)onPan:(UIPanGestureRecognizer *)pan {
+    UIView *btn = pan.view;
+    CGPoint t = [pan translationInView:btn.superview];
+    btn.center = CGPointMake(btn.center.x + t.x, btn.center.y + t.y);
+    [pan setTranslation:CGPointZero inView:btn.superview];
+}
+
+- (void)togglePanel {
+    if (self.panelExpanded) {
+        [self.panelView removeFromSuperview];
         self.panelView = nil;
-    }];
+        self.panelExpanded = NO;
+        return;
+    }
+    self.panelExpanded = YES;
+
+    UIWindow *keyWin = AS_KeyWindow();
+    CGRect bounds = keyWin.bounds;
+    CGFloat panelW = 240;
+    CGFloat panelH = 200;
+    self.panelView = [[UIView alloc] initWithFrame:CGRectMake((bounds.size.width-panelW)/2,
+                                                              (bounds.size.height-panelH)/2,
+                                                              panelW, panelH)];
+    self.panelView.backgroundColor = [UIColor colorWithRed:0.10 green:0.11 blue:0.13 alpha:0.97];
+    self.panelView.layer.cornerRadius = 16;
+    self.panelView.layer.borderWidth = 1;
+    self.panelView.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.15].CGColor;
+    [keyWin addSubview:self.panelView];
+
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 14, panelW, 22)];
+    title.text = @"eoeo 控制中心";
+    title.textColor = [UIColor whiteColor];
+    title.font = [UIFont boldSystemFontOfSize:16];
+    title.textAlignment = NSTextAlignmentCenter;
+    [self.panelView addSubview:title];
+
+    NSArray<NSString *> *labels = @[@"跳过激励广告", @"广告加速", @"关闭悬浮窗"];
+    for (NSInteger i = 0; i < 3; i++) {
+        UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+        btn.frame = CGRectMake(20, 46 + i*46, panelW-40, 38);
+        [btn setTitle:labels[i] forState:UIControlStateNormal];
+        [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        btn.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
+        btn.layer.cornerRadius = 9;
+        btn.tag = 1000 + i;
+        [self updateButton:btn atIndex:i];
+        [btn addTarget:self action:@selector(onButtonTap:) forControlEvents:UIControlEventTouchUpInside];
+        [self.panelView addSubview:btn];
+    }
 }
 
-#pragma mark - 按钮 1：跳过激励广告
+- (void)updateButton:(UIButton *)btn atIndex:(NSInteger)i {
+    BOOL on = NO;
+    UIColor *base = [UIColor colorWithRed:0.25 green:0.27 blue:0.30 alpha:1.0];
+    if (i == 0) { on = gSkipAdEnabled;  base = on ? [UIColor colorWithRed:0.20 green:0.78 blue:0.45 alpha:1.0] : base; }
+    if (i == 1) { on = gSpeedAdEnabled; base = on ? [UIColor colorWithRed:0.95 green:0.65 blue:0.15 alpha:1.0] : base; }
+    if (i == 2) { base = [UIColor colorWithRed:0.90 green:0.30 blue:0.30 alpha:1.0]; }
+    btn.backgroundColor = base;
+    NSString *title = (i == 2) ? @"关闭悬浮窗" : ([NSString stringWithFormat:@"%@ %@",
+                      (i==0?@"跳过激励广告":@"广告加速"), on ? @"✅" : @"⚪"]);
+    [btn setTitle:title forState:UIControlStateNormal];
+}
 
-- (void)skipRewardedAd {
-    __block NSInteger dismissed = 0;
-    __block BOOL rewarded = NO;
+- (void)onButtonTap:(UIButton *)sender {
+    NSInteger i = sender.tag - 1000;
+    if (i == 0) {
+        gSkipAdEnabled = !gSkipAdEnabled;
+        [self toast:gSkipAdEnabled ? @"已开启：自动跳过激励广告" : @"已关闭：跳过激励广告"];
+        if (gSkipAdEnabled) [self dismissAllAdsNow];
+    } else if (i == 1) {
+        gSpeedAdEnabled = !gSpeedAdEnabled;
+        [self toast:gSpeedAdEnabled ? @"已开启：广告加速 x8" : @"已关闭：广告加速"];
+        if (gSpeedAdEnabled) [self speedUpAllPlayersNow];
+    } else if (i == 2) {
+        [self closeFloatWindow];
+        return;
+    }
+    [self updateButton:sender atIndex:i];
+}
 
+- (void)dismissAllAdsNow {
     for (UIWindow *w in AS_AllWindows()) {
         AS_EnumerateViewControllers(w.rootViewController, ^(UIViewController *vc) {
             if (AS_IsAdViewController(vc)) {
-                // 尝试触发奖励回调
-                NSString *cls = NSStringFromClass([vc class]);
-                // Google AdMob: GADRewardedAd 有 userDidEarnRewardHandler
-                if ([cls rangeOfString:@"GAD"].location != NSNotFound) {
-                    id handler = nil;
-                    @try { handler = [vc valueForKey:@"userDidEarnRewardHandler"]; } @catch(NSException *e) {}
-                    if (handler) {
-                        @try { ((void(*)(id, SEL))objc_msgSend)(handler, @selector(invoke)); } @catch(NSException *e) {}
-                        rewarded = YES;
-                    }
-                }
-                // 通用：尝试调用 reward / didReward 相关 selector
-                NSArray<NSString *> *rewardSels = @[@"rewardUser", @"grantReward", @"userDidEarnReward", @"didReward"];
-                for (NSString *selName in rewardSels) {
-                    SEL s = NSSelectorFromString(selName);
-                    if ([vc respondsToSelector:s]) {
-                        @try { ((void(*)(id, SEL))objc_msgSend)(vc, s); rewarded = YES; } @catch(NSException *e) {}
-                    }
-                }
-                // 关闭广告 VC
+                AS_GrantRewardForAd(vc);
                 [vc dismissViewControllerAnimated:NO completion:nil];
-                dismissed++;
             }
         });
     }
-
-    // 移除可能的广告 overlay window
-    for (UIWindow *w in AS_AllWindows()) {
-        if (w != self.panelWindow) {
-            NSString *cls = NSStringFromClass([w class]);
-            if ([cls rangeOfString:@"Ad" options:NSCaseInsensitiveSearch].location != NSNotFound ||
-                [cls rangeOfString:@"Banner" options:NSCaseInsensitiveSearch].location != NSNotFound) {
-                w.hidden = YES;
-                [w removeFromSuperview];
-            }
-        }
-    }
-
-    [self toast:rewarded ? [NSString stringWithFormat:@"已跳过广告并发放奖励 (%ld)", (long)dismissed]
-                  : [NSString stringWithFormat:@"已关闭 %ld 个广告", (long)dismissed]];
 }
 
-#pragma mark - 按钮 2：广告加速
-
-- (void)speedUpAd {
-    // 遍历可见的 AVPlayerLayer，将其 player.rate 设为 8.0 实现广告加速
-    __block NSInteger count = 0;
+- (void)speedUpAllPlayersNow {
     for (UIWindow *w in AS_AllWindows()) {
         AS_EnumerateViewControllers(w.rootViewController, ^(UIViewController *vc) {
-            [self speedUpPlayersInView:vc.view count:&count];
+            [self speedUpPlayersInView:vc.view];
         });
     }
-
-    // 尝试加速系统音频（MPVolumeView 底层）
-    // 对 AVPlayer 无法全局枚举的场景，通过设置 AVAudioSession 提示无法处理；
-    // 这里额外尝试通过运行时遍历所有类的实例（仅对少量常用类）
-    [self trySpeedUpKnownPlayerClasses:&count];
-
-    [self toast:[NSString stringWithFormat:@"已加速 %ld 个播放器 (x8.0)", (long)count]];
 }
 
-- (void)speedUpPlayersInView:(UIView *)view count:(NSInteger *)count {
+- (void)speedUpPlayersInView:(UIView *)view {
     if (!view) return;
     if ([view isKindOfClass:NSClassFromString(@"AVPlayerLayer")]) {
         AVPlayerLayer *layer = (AVPlayerLayer *)view.layer;
-        if (layer.player) {
-            layer.player.rate = 8.0;
-            (*count)++;
-        }
+        if (layer.player) layer.player.rate = 8.0;
     }
-    for (UIView *sub in view.subviews) {
-        [self speedUpPlayersInView:sub count:count];
-    }
+    for (UIView *sub in view.subviews) [self speedUpPlayersInView:sub];
 }
 
-- (void)trySpeedUpKnownPlayerClasses:(NSInteger *)count {
-    // 常见播放器类名
-    NSArray *clsNames = @[@"AVPlayer", @"MPMoviePlayerController",
-                          @"AVQueuePlayer", @"AVLooper"];
-    for (NSString *name in clsNames) {
-        Class cls = NSClassFromString(name);
-        if (!cls) continue;
-        // 无法直接枚举所有实例，跳过；实例在视图中已处理
-    }
+- (void)closeFloatWindow {
+    [self.panelView removeFromSuperview];
+    self.panelView = nil;
+    self.panelExpanded = NO;
+    self.floatWindow.hidden = YES;
+    self.floatWindow = nil;
+    gSkipAdEnabled = NO;
+    gSpeedAdEnabled = NO;
+    [self toast:@"eoeo 悬浮窗已关闭"];
 }
-
-#pragma mark - 按钮 3：关闭悬浮窗
-
-- (void)closeFloatingWindow {
-    NSInteger removed = 0;
-    NSArray *wins = [AS_AllWindows() copy];
-    for (UIWindow *w in wins) {
-        if (w == self.panelWindow) continue;
-        // 非 key window 且不在主 scene、或为悬浮层
-        if (!w.isKeyWindow) {
-            NSString *cls = NSStringFromClass([w class]);
-            // 跳过系统键盘等
-            if ([cls containsString:@"UITextEffectsWindow"] ||
-                [cls containsString:@"UIRemoteKeyboardWindow"]) continue;
-            if (w.windowLevel > UIWindowLevelNormal) {
-                w.hidden = YES;
-                [w removeFromSuperview];
-                removed++;
-            }
-        }
-    }
-    // 同时 dismiss 掉所有 presented VC（多为广告/悬浮弹窗）
-    for (UIWindow *w in AS_AllWindows()) {
-        UIViewController *top = w.rootViewController;
-        while (top.presentedViewController) {
-            top = top.presentedViewController;
-        }
-        if (top != w.rootViewController) {
-            [top dismissViewControllerAnimated:NO completion:nil];
-            removed++;
-        }
-    }
-    [self toast:[NSString stringWithFormat:@"已关闭 %ld 个悬浮窗", (long)removed]];
-}
-
-#pragma mark - Toast
 
 - (void)toast:(NSString *)msg {
+    UIWindow *keyWin = AS_KeyWindow();
+    if (!keyWin) return;
     UILabel *label = [[UILabel alloc] init];
     label.text = msg;
     label.textColor = [UIColor whiteColor];
@@ -302,86 +274,75 @@ static BOOL AS_IsAdViewController(UIViewController *vc) {
     label.layer.masksToBounds = YES;
     CGSize s = [msg sizeWithAttributes:@{NSFontAttributeName: label.font}];
     label.frame = CGRectMake(0, 0, s.width + 24, 32);
-    UIWindow *keyWin = AS_KeyWindow();
     label.center = CGPointMake(keyWin.bounds.size.width/2, keyWin.bounds.size.height - 100);
     [keyWin addSubview:label];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.6 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         [UIView animateWithDuration:0.3 animations:^{ label.alpha = 0; } completion:^(BOOL f){ [label removeFromSuperview]; }];
     });
 }
 
 @end
 
-#pragma mark - 手势安装
+#pragma mark - 全局 Hook：广告自动跳过
 
-@interface ASLongPressGesture : UILongPressGestureRecognizer @end
-@implementation ASLongPressGesture
-- (BOOL)canBePreventedByGestureRecognizer:(UIGestureRecognizer *)g { return NO; }
-- (BOOL)canPreventGestureRecognizer:(UIGestureRecognizer *)g { return NO; }
-- (BOOL)shouldRequireFailureOfGestureRecognizer:(UIGestureRecognizer *)g { return NO; }
-- (BOOL)shouldBeRequiredToFailByGestureRecognizer:(UIGestureRecognizer *)g { return NO; }
-@end
+%hook UIViewController
 
-static const void *kASGestureInstalled = &kASGestureInstalled;
-
-static void AS_InstallGesture(UIWindow *window) {
-    if (!window) return;
-    if (objc_getAssociatedObject(window, kASGestureInstalled)) return;
-
-    ASLongPressGesture *lp = [[ASLongPressGesture alloc] initWithTarget:[AdSkipManager sharedManager]
-                                                                 action:@selector(showPanel)];
-    lp.numberOfTouchesRequired = 3;
-    lp.minimumPressDuration = 0.5;
-    lp.allowableMovement = 30;
-    lp.cancelsTouchesInView = NO;
-    [window addGestureRecognizer:lp];
-    objc_setAssociatedObject(window, kASGestureInstalled, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-}
-
-#pragma mark - Logos Hooks
-
-%hook UIWindow
-
-- (void)makeKeyAndVisible {
+- (void)viewDidAppear:(BOOL)animated {
     %orig;
-    AS_InstallGesture(self);
+    if (gSkipAdEnabled && AS_IsAdViewController(self)) {
+        // 延迟一点确保 reward handler 已设置
+        UIViewController *vc = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (gSkipAdEnabled) {
+                AS_GrantRewardForAd(vc);
+                [vc dismissViewControllerAnimated:NO completion:nil];
+            }
+        });
+    }
 }
 
 %end
+
+#pragma mark - 全局 Hook：广告自动加速
+
+%hook AVPlayer
+
+- (void)setRate:(float)rate {
+    if (gSpeedAdEnabled) {
+        %orig(8.0);
+    } else {
+        %orig;
+    }
+}
+
+- (void)play {
+    %orig;
+    if (gSpeedAdEnabled) {
+        self.rate = 8.0;
+    }
+}
+
+%end
+
+#pragma mark - 入口
 
 %hook UIApplication
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
     BOOL r = %orig;
     dispatch_async(dispatch_get_main_queue(), ^{
-        for (UIWindow *w in AS_AllWindows()) {
-            AS_InstallGesture(w);
-        }
+        [[AdSkipManager sharedManager] install];
     });
     return r;
 }
 
 %end
 
-#pragma mark - 广告加速运行时 Hook（AVPlayer rate 拦截）
-
-%hook AVPlayer
-
-- (void)setRate:(float)rate {
-    // 允许外部正常设置；加速按钮通过直接修改实例变量实现，这里不强制
-    %orig;
-}
-
-%end
-
 %ctor {
     @autoreleasepool {
-        NSLog(@"[AdSkipTweak] loaded; 三指长按唤起广告控制中心");
-        // 保险：延迟安装
+        NSLog(@"[eoeo] tweak loaded");
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            for (UIWindow *w in AS_AllWindows()) {
-                AS_InstallGesture(w);
-            }
+            [[AdSkipManager sharedManager] install];
         });
     }
 }
