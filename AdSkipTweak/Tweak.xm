@@ -8,6 +8,8 @@
 static BOOL gSkipAdEnabled  = NO;   // 跳过激励广告
 static BOOL gSpeedAdEnabled = NO;   // 广告加速
 
+#define kEOEOBlue [UIColor colorWithRed:0.00 green:0.48 blue:1.00 alpha:1.0] // systemBlue #007AFF
+
 #pragma mark - 工具
 
 static void AS_EnumerateViewControllers(UIViewController *vc, void(^block)(UIViewController *vc)) {
@@ -61,7 +63,6 @@ static BOOL AS_IsAdViewController(UIViewController *vc) {
 
 static void AS_GrantRewardForAd(UIViewController *vc) {
     NSString *cls = NSStringFromClass([vc class]);
-    // Google AdMob
     if ([cls rangeOfString:@"GAD"].location != NSNotFound) {
         @try {
             id handler = [vc valueForKey:@"userDidEarnRewardHandler"];
@@ -77,12 +78,85 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     }
 }
 
-#pragma mark - AdSkipManager（eoeo 悬浮窗）
+#pragma mark - eoeo 悬浮窗（可拖动的药丸）
+
+@interface EOEOFloatingView : UIView
+@property (nonatomic, copy) void(^onTap)(void);
+@end
+
+@implementation EOEOFloatingView {
+    CGPoint _startOrigin;
+    CGPoint _startTouch;
+    BOOL _didDrag;
+}
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.backgroundColor = [UIColor whiteColor];
+        self.layer.cornerRadius = frame.size.height / 2.0;
+        self.layer.shadowColor = [UIColor blackColor].CGColor;
+        self.layer.shadowOpacity = 0.18;
+        self.layer.shadowOffset = CGSizeMake(0, 2);
+        self.layer.shadowRadius = 6;
+        self.layer.borderWidth = 0.5;
+        self.layer.borderColor = [UIColor colorWithWhite:0 alpha:0.08].CGColor;
+
+        UILabel *label = [[UILabel alloc] initWithFrame:self.bounds];
+        label.text = @"eoeo";
+        label.textColor = kEOEOBlue;
+        label.font = [UIFont systemFontOfSize:14 weight:UIFontWeightSemibold];
+        label.textAlignment = NSTextAlignmentCenter;
+        [self addSubview:label];
+    }
+    return self;
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    UITouch *t = touches.anyObject;
+    _startTouch = [t locationInView:self.superview];
+    _startOrigin = self.frame.origin;
+    _didDrag = NO;
+    [super touchesBegan:touches withEvent:event];
+}
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    UITouch *t = touches.anyObject;
+    CGPoint p = [t locationInView:self.superview];
+    CGFloat dx = p.x - _startTouch.x;
+    CGFloat dy = p.y - _startTouch.y;
+    if (fabs(dx) > 4 || fabs(dy) > 4) _didDrag = YES;
+    if (_didDrag) {
+        CGRect f = self.frame;
+        f.origin.x = _startOrigin.x + dx;
+        f.origin.y = _startOrigin.y + dy;
+        // 限制在屏幕内
+        CGSize s = self.superview.bounds.size;
+        f.origin.x = MAX(0, MIN(f.origin.x, s.width - f.size.width));
+        f.origin.y = MAX(0, MIN(f.origin.y, s.height - f.size.height));
+        self.frame = f;
+    }
+    [super touchesMoved:touches withEvent:event];
+}
+
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if (!_didDrag && self.onTap) self.onTap();
+    [super touchesEnded:touches withEvent:event];
+}
+
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesCancelled:touches withEvent:event];
+}
+
+@end
+
+#pragma mark - AdSkipManager
 
 @interface AdSkipManager : NSObject
-@property (nonatomic, strong) UIWindow *floatWindow;   // eoeo 常驻悬浮窗
-@property (nonatomic, strong) UIButton *eoeoButton;    // 显示 "eoeo"
-@property (nonatomic, strong) UIView *panelView;       // 展开的开关面板
+@property (nonatomic, strong) UIWindow *floatWindow;
+@property (nonatomic, strong) EOEOFloatingView *floatView;
+@property (nonatomic, strong) UIView *panelView;
+@property (nonatomic, strong) UIView *dimmerView;
 @property (nonatomic, assign) BOOL panelExpanded;
 + (instancetype)sharedManager;
 - (void)install;
@@ -106,30 +180,20 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     UIWindow *keyWin = AS_KeyWindow();
     CGRect bounds = keyWin ? keyWin.bounds : [UIScreen mainScreen].bounds;
 
-    self.floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(bounds.size.width - 70,
-                                                                  bounds.size.height/2 - 30,
-                                                                  60, 60)];
+    self.floatWindow = [[UIWindow alloc] initWithFrame:bounds];
     self.floatWindow.windowLevel = UIWindowLevelAlert + 2000;
     self.floatWindow.backgroundColor = [UIColor clearColor];
     self.floatWindow.rootViewController = [[UIViewController alloc] init];
     self.floatWindow.rootViewController.view.backgroundColor = [UIColor clearColor];
 
-    self.eoeoButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    self.eoeoButton.frame = self.floatWindow.bounds;
-    [self.eoeoButton setTitle:@"eoeo" forState:UIControlStateNormal];
-    [self.eoeoButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    self.eoeoButton.titleLabel.font = [UIFont boldSystemFontOfSize:15];
-    self.eoeoButton.backgroundColor = [UIColor colorWithRed:0.10 green:0.55 blue:0.95 alpha:0.9];
-    self.eoeoButton.layer.cornerRadius = 30;
-    self.eoeoButton.layer.borderWidth = 1.5;
-    self.eoeoButton.layer.borderColor = [UIColor whiteColor].CGColor;
-    self.eoeoButton.showsTouchWhenHighlighted = YES;
-    [self.eoeoButton addTarget:self action:@selector(togglePanel) forControlEvents:UIControlEventTouchUpInside];
-    [self.floatWindow.rootViewController.view addSubview:self.eoeoButton];
-
-    // 拖拽
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(onPan:)];
-    [self.eoeoButton addGestureRecognizer:pan];
+    // 小长方体（药丸）：宽 84 高 36
+    CGFloat fw = 84, fh = 36;
+    self.floatView = [[EOEOFloatingView alloc] initWithFrame:CGRectMake(bounds.size.width - fw - 14,
+                                                                        bounds.size.height/2 - fh/2,
+                                                                        fw, fh)];
+    __weak typeof(self) weakSelf = self;
+    self.floatView.onTap = ^{ [weakSelf togglePanel]; };
+    [self.floatWindow.rootViewController.view addSubview:self.floatView];
 
     self.floatWindow.hidden = NO;
     if (@available(iOS 13.0, *)) {
@@ -142,84 +206,130 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     }
 }
 
-- (void)onPan:(UIPanGestureRecognizer *)pan {
-    UIView *btn = pan.view;
-    CGPoint t = [pan translationInView:btn.superview];
-    btn.center = CGPointMake(btn.center.x + t.x, btn.center.y + t.y);
-    [pan setTranslation:CGPointZero inView:btn.superview];
-}
-
 - (void)togglePanel {
     if (self.panelExpanded) {
-        [self.panelView removeFromSuperview];
-        self.panelView = nil;
-        self.panelExpanded = NO;
+        [self dismissPanel];
         return;
     }
     self.panelExpanded = YES;
 
     UIWindow *keyWin = AS_KeyWindow();
     CGRect bounds = keyWin.bounds;
-    CGFloat panelW = 240;
-    CGFloat panelH = 200;
-    self.panelView = [[UIView alloc] initWithFrame:CGRectMake((bounds.size.width-panelW)/2,
-                                                              (bounds.size.height-panelH)/2,
-                                                              panelW, panelH)];
-    self.panelView.backgroundColor = [UIColor colorWithRed:0.10 green:0.11 blue:0.13 alpha:0.97];
-    self.panelView.layer.cornerRadius = 16;
-    self.panelView.layer.borderWidth = 1;
-    self.panelView.layer.borderColor = [UIColor colorWithWhite:1 alpha:0.15].CGColor;
-    [keyWin addSubview:self.panelView];
 
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 14, panelW, 22)];
-    title.text = @"eoeo 控制中心";
-    title.textColor = [UIColor whiteColor];
-    title.font = [UIFont boldSystemFontOfSize:16];
-    title.textAlignment = NSTextAlignmentCenter;
+    // 半透明背景（点击关闭）
+    self.dimmerView = [[UIView alloc] initWithFrame:bounds];
+    self.dimmerView.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35];
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissPanel)];
+    [self.dimmerView addGestureRecognizer:tap];
+    [self.floatWindow.rootViewController.view addSubview:self.dimmerView];
+
+    // App Store 风格卡片
+    CGFloat cardW = MIN(bounds.size.width - 40, 340);
+    CGFloat cardH = 280;
+    self.panelView = [[UIView alloc] initWithFrame:CGRectMake((bounds.size.width-cardW)/2,
+                                                              (bounds.size.height-cardH)/2,
+                                                              cardW, cardH)];
+    self.panelView.backgroundColor = [UIColor whiteColor];
+    self.panelView.layer.cornerRadius = 18;
+    self.panelView.layer.shadowColor = [UIColor blackColor].CGColor;
+    self.panelView.layer.shadowOpacity = 0.22;
+    self.panelView.layer.shadowOffset = CGSizeMake(0, 8);
+    self.panelView.layer.shadowRadius = 24;
+    [self.floatWindow.rootViewController.view addSubview:self.panelView];
+
+    // 顶部标题
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 22, cardW-40, 24)];
+    title.text = @"eoeo";
+    title.textColor = [UIColor colorWithWhite:0.1 alpha:1.0];
+    title.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
     [self.panelView addSubview:title];
 
-    NSArray<NSString *> *labels = @[@"跳过激励广告", @"广告加速", @"关闭悬浮窗"];
-    for (NSInteger i = 0; i < 3; i++) {
-        UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-        btn.frame = CGRectMake(20, 46 + i*46, panelW-40, 38);
-        [btn setTitle:labels[i] forState:UIControlStateNormal];
-        [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        btn.titleLabel.font = [UIFont systemFontOfSize:15 weight:UIFontWeightSemibold];
-        btn.layer.cornerRadius = 9;
-        btn.tag = 1000 + i;
-        [self updateButton:btn atIndex:i];
-        [btn addTarget:self action:@selector(onButtonTap:) forControlEvents:UIControlEventTouchUpInside];
-        [self.panelView addSubview:btn];
+    UILabel *subtitle = [[UILabel alloc] initWithFrame:CGRectMake(20, 48, cardW-40, 18)];
+    subtitle.text = @"广告控制";
+    subtitle.textColor = [UIColor colorWithWhite:0.45 alpha:1.0];
+    subtitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
+    [self.panelView addSubview:subtitle];
+
+    // 顶部右侧完成按钮（App Store 风格）
+    UIButton *doneBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    doneBtn.frame = CGRectMake(cardW - 60, 18, 50, 28);
+    [doneBtn setTitle:@"完成" forState:UIControlStateNormal];
+    doneBtn.titleLabel.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    [doneBtn setTitleColor:kEOEOBlue forState:UIControlStateNormal];
+    [doneBtn addTarget:self action:@selector(dismissPanel) forControlEvents:UIControlEventTouchUpInside];
+    [self.panelView addSubview:doneBtn];
+
+    // 开关行
+    NSArray *rows = @[
+        @{@"title": @"跳过激励广告", @"desc": @"自动关闭并发放奖励", @"key": @"skip"},
+        @{@"title": @"广告加速", @"desc": @"所有播放器 x8 倍速", @"key": @"speed"},
+    ];
+    CGFloat rowY = 84;
+    for (NSInteger i = 0; i < rows.count; i++) {
+        NSDictionary *r = rows[i];
+        UIView *row = [[UIView alloc] initWithFrame:CGRectMake(16, rowY, cardW-32, 56)];
+        row.backgroundColor = [UIColor colorWithWhite:0.96 alpha:1.0];
+        row.layer.cornerRadius = 12;
+
+        UILabel *t = [[UILabel alloc] initWithFrame:CGRectMake(14, 10, cardW-120, 20)];
+        t.text = r[@"title"];
+        t.textColor = [UIColor colorWithWhite:0.1 alpha:1.0];
+        t.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+        [row addSubview:t];
+
+        UILabel *d = [[UILabel alloc] initWithFrame:CGRectMake(14, 32, cardW-120, 16)];
+        d.text = r[@"desc"];
+        d.textColor = [UIColor colorWithWhite:0.45 alpha:1.0];
+        d.font = [UIFont systemFontOfSize:12 weight:UIFontWeightRegular];
+        [row addSubview:d];
+
+        UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(cardW-32-16-51, 12, 51, 31)];
+        sw.onTintColor = kEOEOBlue;
+        sw.tag = 2000 + i;
+        sw.on = (i == 0) ? gSkipAdEnabled : gSpeedAdEnabled;
+        [sw addTarget:self action:@selector(onSwitchChanged:) forControlEvents:UIControlEventValueChanged];
+        [row addSubview:sw];
+
+        [self.panelView addSubview:row];
+        rowY += 64;
     }
+
+    // 关闭悬浮窗按钮（App Store 红色 destructive 风格）
+    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    closeBtn.frame = CGRectMake(16, cardH - 64, cardW-32, 48);
+    [closeBtn setTitle:@"关闭悬浮窗" forState:UIControlStateNormal];
+    [closeBtn setTitleColor:[UIColor colorWithRed:1.0 green:0.23 blue:0.19 alpha:1.0] forState:UIControlStateNormal];
+    closeBtn.titleLabel.font = [UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    closeBtn.backgroundColor = [UIColor colorWithWhite:0.96 alpha:1.0];
+    closeBtn.layer.cornerRadius = 12;
+    [closeBtn addTarget:self action:@selector(closeFloatWindow) forControlEvents:UIControlEventTouchUpInside];
+    [self.panelView addSubview:closeBtn];
 }
 
-- (void)updateButton:(UIButton *)btn atIndex:(NSInteger)i {
-    BOOL on = NO;
-    UIColor *base = [UIColor colorWithRed:0.25 green:0.27 blue:0.30 alpha:1.0];
-    if (i == 0) { on = gSkipAdEnabled;  base = on ? [UIColor colorWithRed:0.20 green:0.78 blue:0.45 alpha:1.0] : base; }
-    if (i == 1) { on = gSpeedAdEnabled; base = on ? [UIColor colorWithRed:0.95 green:0.65 blue:0.15 alpha:1.0] : base; }
-    if (i == 2) { base = [UIColor colorWithRed:0.90 green:0.30 blue:0.30 alpha:1.0]; }
-    btn.backgroundColor = base;
-    NSString *title = (i == 2) ? @"关闭悬浮窗" : ([NSString stringWithFormat:@"%@ %@",
-                      (i==0?@"跳过激励广告":@"广告加速"), on ? @"✅" : @"⚪"]);
-    [btn setTitle:title forState:UIControlStateNormal];
-}
-
-- (void)onButtonTap:(UIButton *)sender {
-    NSInteger i = sender.tag - 1000;
+- (void)onSwitchChanged:(UISwitch *)sw {
+    NSInteger i = sw.tag - 2000;
     if (i == 0) {
-        gSkipAdEnabled = !gSkipAdEnabled;
+        gSkipAdEnabled = sw.isOn;
         [self toast:gSkipAdEnabled ? @"已开启：自动跳过激励广告" : @"已关闭：跳过激励广告"];
         if (gSkipAdEnabled) [self dismissAllAdsNow];
-    } else if (i == 1) {
-        gSpeedAdEnabled = !gSpeedAdEnabled;
+    } else {
+        gSpeedAdEnabled = sw.isOn;
         [self toast:gSpeedAdEnabled ? @"已开启：广告加速 x8" : @"已关闭：广告加速"];
         if (gSpeedAdEnabled) [self speedUpAllPlayersNow];
-    } else if (i == 2) {
-        [self closeFloatWindow];
-        return;
     }
-    [self updateButton:sender atIndex:i];
+}
+
+- (void)dismissPanel {
+    [UIView animateWithDuration:0.2 animations:^{
+        self.dimmerView.alpha = 0;
+        self.panelView.alpha = 0;
+    } completion:^(BOOL f){
+        [self.panelView removeFromSuperview];
+        [self.dimmerView removeFromSuperview];
+        self.panelView = nil;
+        self.dimmerView = nil;
+        self.panelExpanded = NO;
+    }];
 }
 
 - (void)dismissAllAdsNow {
@@ -251,14 +361,16 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
 }
 
 - (void)closeFloatWindow {
-    [self.panelView removeFromSuperview];
-    self.panelView = nil;
-    self.panelExpanded = NO;
-    self.floatWindow.hidden = YES;
-    self.floatWindow = nil;
-    gSkipAdEnabled = NO;
-    gSpeedAdEnabled = NO;
-    [self toast:@"eoeo 悬浮窗已关闭"];
+    [self dismissPanel];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        self.floatView.onTap = nil;
+        [self.floatView removeFromSuperview];
+        self.floatView = nil;
+        self.floatWindow.hidden = YES;
+        self.floatWindow = nil;
+        gSkipAdEnabled = NO;
+        gSpeedAdEnabled = NO;
+    });
 }
 
 - (void)toast:(NSString *)msg {
@@ -290,7 +402,6 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
 - (void)viewDidAppear:(BOOL)animated {
     %orig;
     if (gSkipAdEnabled && AS_IsAdViewController(self)) {
-        // 延迟一点确保 reward handler 已设置
         UIViewController *vc = self;
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             if (gSkipAdEnabled) {
