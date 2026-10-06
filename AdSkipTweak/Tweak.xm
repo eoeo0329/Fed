@@ -5,10 +5,15 @@
 
 #pragma mark - 全局开关（开启后持续生效）
 
-static BOOL gSkipAdEnabled  = NO;   // 跳过激励广告
-static BOOL gSpeedAdEnabled = NO;   // 广告加速
+static BOOL gSkipAdEnabled      = NO;
+static BOOL gCustomSpeedEnabled = NO;
+static BOOL gAdBlockEnabled     = NO;
+static BOOL gBlockShakeEnabled  = NO;
+static BOOL gTouchTrailEnabled  = NO;
+static BOOL gForce120FPSEnabled = NO;
 
-#define kEOEOBlue [UIColor colorWithRed:0.00 green:0.48 blue:1.00 alpha:1.0]
+#define kEOEOBlue      [UIColor colorWithRed:0.00 green:0.48 blue:1.00 alpha:1.0]
+#define kCustomSpeed   8.0f
 
 #pragma mark - 工具
 
