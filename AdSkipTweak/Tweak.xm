@@ -13,6 +13,7 @@ static BOOL   gAdBlockEnabled     = NO;
 static BOOL   gBlockShakeEnabled  = NO;
 static BOOL   gTouchTrailEnabled  = NO;
 static BOOL   gForce120FPSEnabled = NO;
+static BOOL   gShowFPSEnabled     = NO;
 
 #define kEOEOBlue [UIColor colorWithRed:0.00 green:0.48 blue:1.00 alpha:1.0]
 
@@ -157,24 +158,6 @@ static void AS_UpdateTrailView(void) {
     }
 }
 
-#pragma mark - 穿透触摸视图（eoeo 按钮之外的触摸透传给应用）
-
-@interface EOEPassthroughView : UIView
-@property (nonatomic, weak) UIView *floatView;
-@property (nonatomic, weak) UIView *panelView;
-@property (nonatomic, assign) BOOL panelExpanded;
-@end
-
-@implementation EOEPassthroughView
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    if (self.panelExpanded) return [super hitTest:point withEvent:event];
-    if (self.floatView && CGRectContainsPoint(self.floatView.frame, point)) {
-        return [super hitTest:point withEvent:event];
-    }
-    return nil;
-}
-@end
-
 #pragma mark - eoeo 悬浮窗
 
 @interface EOEOFloatingView : UIView
@@ -250,7 +233,7 @@ static void AS_UpdateTrailView(void) {
 
 @interface AdSkipManager : NSObject
 @property (nonatomic, strong) UIWindow *floatWindow;
-@property (nonatomic, strong) EOEPassthroughView *rootView;
+@property (nonatomic, strong) UIView *rootView;
 @property (nonatomic, strong) EOEOFloatingView *floatView;
 @property (nonatomic, strong) UIView *panelView;
 @property (nonatomic, strong) UIView *dimmerView;
@@ -280,24 +263,23 @@ static void AS_UpdateTrailView(void) {
     UIWindow *keyWin = AS_KeyWindow();
     CGRect bounds = keyWin ? keyWin.bounds : [UIScreen mainScreen].bounds;
 
-    self.floatWindow = [[UIWindow alloc] initWithFrame:bounds];
+    CGFloat fw = 68, fh = 28;
+    CGRect btnFrame = CGRectMake(bounds.size.width - fw - 14, bounds.size.height/2 - fh/2, fw, fh);
+
+    self.floatWindow = [[UIWindow alloc] initWithFrame:btnFrame];
     self.floatWindow.windowLevel = UIWindowLevelAlert + 2000;
     self.floatWindow.backgroundColor = [UIColor clearColor];
 
     UIViewController *vc = [[UIViewController alloc] init];
-    self.rootView = [[EOEPassthroughView alloc] initWithFrame:bounds];
+    self.rootView = [[UIView alloc] initWithFrame:self.floatWindow.bounds];
     self.rootView.backgroundColor = [UIColor clearColor];
     vc.view = self.rootView;
     self.floatWindow.rootViewController = vc;
 
-    CGFloat fw = 68, fh = 28;
-    self.floatView = [[EOEOFloatingView alloc] initWithFrame:CGRectMake(bounds.size.width - fw - 14,
-                                                                        bounds.size.height/2 - fh/2,
-                                                                        fw, fh)];
+    self.floatView = [[EOEOFloatingView alloc] initWithFrame:self.rootView.bounds];
     __weak typeof(self) weakSelf = self;
     self.floatView.onTap = ^{ [weakSelf togglePanel]; };
     [self.rootView addSubview:self.floatView];
-    self.rootView.floatView = self.floatView;
 
     self.floatWindow.hidden = NO;
     if (@available(iOS 13.0, *)) {
@@ -310,13 +292,29 @@ static void AS_UpdateTrailView(void) {
     }
 }
 
+- (void)expandWindowToFullScreen {
+    UIWindow *keyWin = AS_KeyWindow();
+    CGRect bounds = keyWin ? keyWin.bounds : [UIScreen mainScreen].bounds;
+    CGPoint btnOrigin = self.floatWindow.frame.origin;
+    self.floatWindow.frame = bounds;
+    self.rootView.frame = bounds;
+    self.floatView.frame = CGRectMake(btnOrigin.x, btnOrigin.y, self.floatView.frame.size.width, self.floatView.frame.size.height);
+}
+
+- (void)shrinkWindowToButton {
+    CGRect f = self.floatView.frame;
+    self.floatWindow.frame = f;
+    self.rootView.frame = self.floatWindow.bounds;
+    self.floatView.frame = self.rootView.bounds;
+}
+
 - (void)togglePanel {
     if (self.panelExpanded) {
         [self dismissPanel];
         return;
     }
     self.panelExpanded = YES;
-    self.rootView.panelExpanded = YES;
+    [self expandWindowToFullScreen];
 
     UIWindow *keyWin = AS_KeyWindow();
     CGRect bounds = keyWin.bounds;
@@ -328,7 +326,7 @@ static void AS_UpdateTrailView(void) {
     [self.rootView addSubview:self.dimmerView];
 
     CGFloat cardW = MIN(bounds.size.width - 40, 340);
-    CGFloat cardH = 500;
+    CGFloat cardH = 560;
     self.panelView = [[UIView alloc] initWithFrame:CGRectMake((bounds.size.width-cardW)/2,
                                                               (bounds.size.height-cardH)/2,
                                                               cardW, cardH)];
@@ -365,7 +363,8 @@ static void AS_UpdateTrailView(void) {
         @{@"title": @"更新广告屏蔽", @"desc": @"清除广告缓存并拦截"},
         @{@"title": @"禁用摇广", @"desc": @"屏蔽摇一摇触发广告"},
         @{@"title": @"触摸轨迹", @"desc": @"显示手指滑动轨迹"},
-        @{@"title": @"120帧率", @"desc": @"强制 120Hz 并显示实时 FPS"},
+        @{@"title": @"强制120帧率", @"desc": @"强制 120Hz 刷新率"},
+        @{@"title": @"显示帧数", @"desc": @"屏幕显示实时 FPS"},
     ];
     CGFloat rowY = 84;
 
@@ -426,6 +425,7 @@ static void AS_UpdateTrailView(void) {
         else if (i == 2) on = gBlockShakeEnabled;
         else if (i == 3) on = gTouchTrailEnabled;
         else if (i == 4) on = gForce120FPSEnabled;
+        else if (i == 5) on = gShowFPSEnabled;
         sw.on = on;
         [sw addTarget:self action:@selector(onSwitchChanged:) forControlEvents:UIControlEventValueChanged];
         [row addSubview:sw];
@@ -463,13 +463,12 @@ static void AS_UpdateTrailView(void) {
         AS_UpdateTrailView();
     } else if (i == 4) {
         gForce120FPSEnabled = sw.isOn;
-        [self toast:gForce120FPSEnabled ? @"已开启：120帧率" : @"已关闭：120帧率"];
-        if (gForce120FPSEnabled) {
-            [self apply120FPS];
-            [self startFPSCounter];
-        } else {
-            [self stopFPSCounter];
-        }
+        [self toast:gForce120FPSEnabled ? @"已开启：强制120帧率" : @"已关闭：强制120帧率"];
+        if (gForce120FPSEnabled) [self apply120FPS];
+    } else if (i == 5) {
+        gShowFPSEnabled = sw.isOn;
+        [self toast:gShowFPSEnabled ? @"已开启：显示帧数" : @"已关闭：显示帧数"];
+        if (gShowFPSEnabled) [self startFPSCounter]; else [self stopFPSCounter];
     }
 }
 
@@ -530,7 +529,7 @@ static void AS_UpdateTrailView(void) {
         self.panelView = nil;
         self.dimmerView = nil;
         self.panelExpanded = NO;
-        self.rootView.panelExpanded = NO;
+        [self shrinkWindowToButton];
     }];
 }
 
@@ -684,6 +683,27 @@ static void AS_UpdateTrailView(void) {
 - (void)setPreferredFramesPerSecond:(NSInteger)preferredFramesPerSecond {
     if (gForce120FPSEnabled) {
         %orig(120);
+    } else {
+        %orig;
+    }
+}
+
+- (void)setPreferredFrameRateRange:(id)range {
+    if (!gForce120FPSEnabled) {
+        %orig;
+        return;
+    }
+    Class cls = NSClassFromString(@"CAFrameRateRange");
+    if (!cls) {
+        %orig;
+        return;
+    }
+    id r = [[cls alloc] init];
+    if ([r respondsToSelector:NSSelectorFromString(@"setMinimum:")]) {
+        [r setValue:@(120) forKey:@"minimum"];
+        [r setValue:@(120) forKey:@"maximum"];
+        [r setValue:@(120) forKey:@"preferred"];
+        %orig(r);
     } else {
         %orig;
     }
