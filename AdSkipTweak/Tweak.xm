@@ -157,6 +157,24 @@ static void AS_UpdateTrailView(void) {
     }
 }
 
+#pragma mark - 穿透触摸视图（eoeo 按钮之外的触摸透传给应用）
+
+@interface EOEPassthroughView : UIView
+@property (nonatomic, weak) UIView *floatView;
+@property (nonatomic, weak) UIView *panelView;
+@property (nonatomic, assign) BOOL panelExpanded;
+@end
+
+@implementation EOEPassthroughView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    if (self.panelExpanded) return [super hitTest:point withEvent:event];
+    if (self.floatView && CGRectContainsPoint(self.floatView.frame, point)) {
+        return [super hitTest:point withEvent:event];
+    }
+    return nil;
+}
+@end
+
 #pragma mark - eoeo 悬浮窗
 
 @interface EOEOFloatingView : UIView
@@ -232,9 +250,14 @@ static void AS_UpdateTrailView(void) {
 
 @interface AdSkipManager : NSObject
 @property (nonatomic, strong) UIWindow *floatWindow;
+@property (nonatomic, strong) EOEPassthroughView *rootView;
 @property (nonatomic, strong) EOEOFloatingView *floatView;
 @property (nonatomic, strong) UIView *panelView;
 @property (nonatomic, strong) UIView *dimmerView;
+@property (nonatomic, strong) UILabel *fpsLabel;
+@property (nonatomic, strong) CADisplayLink *fpsLink;
+@property (nonatomic, assign) NSInteger fpsCount;
+@property (nonatomic, assign) CFTimeInterval fpsLastTime;
 @property (nonatomic, assign) BOOL panelExpanded;
 + (instancetype)sharedManager;
 - (void)install;
@@ -260,8 +283,12 @@ static void AS_UpdateTrailView(void) {
     self.floatWindow = [[UIWindow alloc] initWithFrame:bounds];
     self.floatWindow.windowLevel = UIWindowLevelAlert + 2000;
     self.floatWindow.backgroundColor = [UIColor clearColor];
-    self.floatWindow.rootViewController = [[UIViewController alloc] init];
-    self.floatWindow.rootViewController.view.backgroundColor = [UIColor clearColor];
+
+    UIViewController *vc = [[UIViewController alloc] init];
+    self.rootView = [[EOEPassthroughView alloc] initWithFrame:bounds];
+    self.rootView.backgroundColor = [UIColor clearColor];
+    vc.view = self.rootView;
+    self.floatWindow.rootViewController = vc;
 
     CGFloat fw = 68, fh = 28;
     self.floatView = [[EOEOFloatingView alloc] initWithFrame:CGRectMake(bounds.size.width - fw - 14,
@@ -269,7 +296,8 @@ static void AS_UpdateTrailView(void) {
                                                                         fw, fh)];
     __weak typeof(self) weakSelf = self;
     self.floatView.onTap = ^{ [weakSelf togglePanel]; };
-    [self.floatWindow.rootViewController.view addSubview:self.floatView];
+    [self.rootView addSubview:self.floatView];
+    self.rootView.floatView = self.floatView;
 
     self.floatWindow.hidden = NO;
     if (@available(iOS 13.0, *)) {
@@ -288,6 +316,7 @@ static void AS_UpdateTrailView(void) {
         return;
     }
     self.panelExpanded = YES;
+    self.rootView.panelExpanded = YES;
 
     UIWindow *keyWin = AS_KeyWindow();
     CGRect bounds = keyWin.bounds;
@@ -296,7 +325,7 @@ static void AS_UpdateTrailView(void) {
     self.dimmerView.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35];
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissPanel)];
     [self.dimmerView addGestureRecognizer:tap];
-    [self.floatWindow.rootViewController.view addSubview:self.dimmerView];
+    [self.rootView addSubview:self.dimmerView];
 
     CGFloat cardW = MIN(bounds.size.width - 40, 340);
     CGFloat cardH = 500;
@@ -309,7 +338,7 @@ static void AS_UpdateTrailView(void) {
     self.panelView.layer.shadowOpacity = 0.22;
     self.panelView.layer.shadowOffset = CGSizeMake(0, 8);
     self.panelView.layer.shadowRadius = 24;
-    [self.floatWindow.rootViewController.view addSubview:self.panelView];
+    [self.rootView addSubview:self.panelView];
 
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 22, cardW-40, 24)];
     title.text = @"eoeo";
@@ -336,7 +365,7 @@ static void AS_UpdateTrailView(void) {
         @{@"title": @"更新广告屏蔽", @"desc": @"清除广告缓存并拦截"},
         @{@"title": @"禁用摇广", @"desc": @"屏蔽摇一摇触发广告"},
         @{@"title": @"触摸轨迹", @"desc": @"显示手指滑动轨迹"},
-        @{@"title": @"120帧率", @"desc": @"强制 120Hz 刷新率"},
+        @{@"title": @"120帧率", @"desc": @"强制 120Hz 并显示实时 FPS"},
     ];
     CGFloat rowY = 84;
 
@@ -345,7 +374,7 @@ static void AS_UpdateTrailView(void) {
     speedRow.layer.cornerRadius = 12;
 
     UILabel *st = [[UILabel alloc] initWithFrame:CGRectMake(14, 10, 120, 20)];
-    st.text = @"自定义速度";
+    st.text = @"广告速度";
     st.textColor = [UIColor colorWithWhite:0.1 alpha:1.0];
     st.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
     [speedRow addSubview:st];
@@ -435,7 +464,53 @@ static void AS_UpdateTrailView(void) {
     } else if (i == 4) {
         gForce120FPSEnabled = sw.isOn;
         [self toast:gForce120FPSEnabled ? @"已开启：120帧率" : @"已关闭：120帧率"];
-        if (gForce120FPSEnabled) [self apply120FPS];
+        if (gForce120FPSEnabled) {
+            [self apply120FPS];
+            [self startFPSCounter];
+        } else {
+            [self stopFPSCounter];
+        }
+    }
+}
+
+- (void)startFPSCounter {
+    if (self.fpsLink) return;
+    UIWindow *keyWin = AS_KeyWindow();
+    self.fpsLabel = [[UILabel alloc] initWithFrame:CGRectMake(14, 40, 90, 24)];
+    self.fpsLabel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+    self.fpsLabel.textColor = [UIColor whiteColor];
+    self.fpsLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
+    self.fpsLabel.textAlignment = NSTextAlignmentCenter;
+    self.fpsLabel.layer.cornerRadius = 6;
+    self.fpsLabel.layer.masksToBounds = YES;
+    self.fpsLabel.text = @"FPS: --";
+    [keyWin addSubview:self.fpsLabel];
+
+    self.fpsCount = 0;
+    self.fpsLastTime = 0;
+    self.fpsLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(fpsTick:)];
+    [self.fpsLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+}
+
+- (void)stopFPSCounter {
+    [self.fpsLink invalidate];
+    self.fpsLink = nil;
+    [self.fpsLabel removeFromSuperview];
+    self.fpsLabel = nil;
+}
+
+- (void)fpsTick:(CADisplayLink *)link {
+    if (self.fpsLastTime == 0) {
+        self.fpsLastTime = link.timestamp;
+        return;
+    }
+    self.fpsCount++;
+    CFTimeInterval dt = link.timestamp - self.fpsLastTime;
+    if (dt >= 1.0) {
+        NSInteger fps = (NSInteger)round((double)self.fpsCount / dt);
+        self.fpsLabel.text = [NSString stringWithFormat:@"FPS: %ld", (long)fps];
+        self.fpsCount = 0;
+        self.fpsLastTime = link.timestamp;
     }
 }
 
@@ -455,6 +530,7 @@ static void AS_UpdateTrailView(void) {
         self.panelView = nil;
         self.dimmerView = nil;
         self.panelExpanded = NO;
+        self.rootView.panelExpanded = NO;
     }];
 }
 
