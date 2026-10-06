@@ -8,7 +8,7 @@
 static BOOL gSkipAdEnabled  = NO;   // 跳过激励广告
 static BOOL gSpeedAdEnabled = NO;   // 广告加速
 
-#define kEOEOBlue [UIColor colorWithRed:0.00 green:0.48 blue:1.00 alpha:1.0] // systemBlue #007AFF
+#define kEOEOBlue [UIColor colorWithRed:0.00 green:0.48 blue:1.00 alpha:1.0]
 
 #pragma mark - 工具
 
@@ -94,7 +94,7 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     self = [super initWithFrame:frame];
     if (self) {
         self.backgroundColor = [UIColor whiteColor];
-        self.layer.cornerRadius = 7;            // 长方形小圆角，非椭圆
+        self.layer.cornerRadius = 7;
         self.layer.shadowColor = [UIColor blackColor].CGColor;
         self.layer.shadowOpacity = 0.18;
         self.layer.shadowOffset = CGSizeMake(0, 2);
@@ -130,7 +130,6 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
         CGRect f = self.frame;
         f.origin.x = _startOrigin.x + dx;
         f.origin.y = _startOrigin.y + dy;
-        // 限制在屏幕内
         CGSize s = self.superview.bounds.size;
         f.origin.x = MAX(0, MIN(f.origin.x, s.width - f.size.width));
         f.origin.y = MAX(0, MIN(f.origin.y, s.height - f.size.height));
@@ -161,7 +160,6 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
 + (instancetype)sharedManager;
 - (void)install;
 - (void)togglePanel;
-- (void)closeFloatWindow;
 - (void)toast:(NSString *)msg;
 @end
 
@@ -186,7 +184,6 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     self.floatWindow.rootViewController = [[UIViewController alloc] init];
     self.floatWindow.rootViewController.view.backgroundColor = [UIColor clearColor];
 
-    // 小长方形：宽 68 高 28（悬浮窗缩小，面板 UI 不变）
     CGFloat fw = 68, fh = 28;
     self.floatView = [[EOEOFloatingView alloc] initWithFrame:CGRectMake(bounds.size.width - fw - 14,
                                                                         bounds.size.height/2 - fh/2,
@@ -216,14 +213,12 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     UIWindow *keyWin = AS_KeyWindow();
     CGRect bounds = keyWin.bounds;
 
-    // 半透明背景（点击关闭）
     self.dimmerView = [[UIView alloc] initWithFrame:bounds];
     self.dimmerView.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35];
     UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissPanel)];
     [self.dimmerView addGestureRecognizer:tap];
     [self.floatWindow.rootViewController.view addSubview:self.dimmerView];
 
-    // App Store 风格卡片
     CGFloat cardW = MIN(bounds.size.width - 40, 340);
     CGFloat cardH = 200;
     self.panelView = [[UIView alloc] initWithFrame:CGRectMake((bounds.size.width-cardW)/2,
@@ -237,7 +232,6 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     self.panelView.layer.shadowRadius = 24;
     [self.floatWindow.rootViewController.view addSubview:self.panelView];
 
-    // 顶部标题
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 22, cardW-40, 24)];
     title.text = @"eoeo";
     title.textColor = [UIColor colorWithWhite:0.1 alpha:1.0];
@@ -250,7 +244,6 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     subtitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
     [self.panelView addSubview:subtitle];
 
-    // 顶部右侧缩小按钮（App Store 风格）
     UIButton *doneBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     doneBtn.frame = CGRectMake(cardW - 60, 18, 50, 28);
     [doneBtn setTitle:@"缩小" forState:UIControlStateNormal];
@@ -259,10 +252,9 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     [doneBtn addTarget:self action:@selector(dismissPanel) forControlEvents:UIControlEventTouchUpInside];
     [self.panelView addSubview:doneBtn];
 
-    // 开关行
     NSArray *rows = @[
-        @{@"title": @"跳过激励广告", @"desc": @"自动关闭并发放奖励", @"key": @"skip"},
-        @{@"title": @"广告加速", @"desc": @"所有播放器 x8 倍速", @"key": @"speed"},
+        @{@"title": @"跳过激励广告", @"desc": @"自动关闭并发放奖励"},
+        @{@"title": @"广告加速", @"desc": @"所有播放器 x8 倍速"},
     ];
     CGFloat rowY = 84;
     for (NSInteger i = 0; i < rows.count; i++) {
@@ -347,19 +339,6 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
         if (layer.player) layer.player.rate = 8.0;
     }
     for (UIView *sub in view.subviews) [self speedUpPlayersInView:sub];
-}
-
-- (void)closeFloatWindow {
-    [self dismissPanel];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        self.floatView.onTap = nil;
-        [self.floatView removeFromSuperview];
-        self.floatView = nil;
-        self.floatWindow.hidden = YES;
-        self.floatWindow = nil;
-        gSkipAdEnabled = NO;
-        gSpeedAdEnabled = NO;
-    });
 }
 
 - (void)toast:(NSString *)msg {
