@@ -1,0 +1,9 @@
+Package: com.eoeo0329.fed
+Name: Fed
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: System-wide rewarded ad skipper and playback accelerator tweak.
+Maintainer: eoeo0329
+Author: eoeo0329
+Section: Tweaks
+Depends: mobilesubstrate

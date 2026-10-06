@@ -1,0 +1,65 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bash \
+            binutils \
+            bzip2 \
+            clang \
+            coreutils \
+            curl \
+            dpkg \
+            fakeroot \
+            file \
+            findutils \
+            git \
+            gpg \
+            gzip \
+            libssl-dev \
+            ldid \
+            make \
+            perl \
+            rsync \
+            tar \
+            unzip \
+            xz-utils \
+            zstd
+
+      - name: Setup Theos
+        run: |
+          git clone --depth 1 https://github.com/theos/theos.git "$GITHUB_WORKSPACE/theos"
+          rm -rf "$GITHUB_WORKSPACE/theos/sdks"
+          git clone --depth 1 https://github.com/theos/sdks.git "$GITHUB_WORKSPACE/theos/sdks"
+          echo "THEOS=$GITHUB_WORKSPACE/theos" >> "$GITHUB_ENV"
+
+      - name: Build package
+        run: |
+          make clean package FINALPACKAGE=1
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: fed-packages
+          path: |
+            packages/*.deb
+            packages/*.ddeb
+          if-no-files-found: error
