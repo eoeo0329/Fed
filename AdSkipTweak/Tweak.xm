@@ -195,7 +195,7 @@ static void AS_UpdateTrailView(void) {
     self = [super initWithFrame:frame];
     if (self) {
         self.backgroundColor = [UIColor whiteColor];
-        self.layer.cornerRadius = 7;
+        self.layer.cornerRadius = 4;
         self.layer.shadowColor = [UIColor blackColor].CGColor;
         self.layer.shadowOpacity = 0.18;
         self.layer.shadowOffset = CGSizeMake(0, 2);
@@ -206,7 +206,7 @@ static void AS_UpdateTrailView(void) {
         UILabel *label = [[UILabel alloc] initWithFrame:self.bounds];
         label.text = @"eoeo";
         label.textColor = kEOEOBlue;
-        label.font = [UIFont systemFontOfSize:13 weight:UIFontWeightSemibold];
+        label.font = [UIFont systemFontOfSize:12 weight:UIFontWeightSemibold];
         label.textAlignment = NSTextAlignmentCenter;
         [self addSubview:label];
     }
@@ -294,7 +294,7 @@ static void AS_UpdateTrailView(void) {
     vc.view = self.rootView;
     self.floatWindow.rootViewController = vc;
 
-    CGFloat fw = 68, fh = 28;
+    CGFloat fw = 56, fh = 22;
     self.floatView = [[EOEOFloatingView alloc] initWithFrame:CGRectMake(bounds.size.width - fw - 14,
                                                                         bounds.size.height/2 - fh/2,
                                                                         fw, fh)];
