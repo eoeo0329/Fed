@@ -304,8 +304,14 @@ static void AS_UpdateTrailView(void) {
     self.rootView.floatView = self.floatView;
 
     self.floatWindow.hidden = NO;
-    // 关键：不让浮窗抢 keyWindow，保持事件正常流向应用
-    [self.floatWindow resignKeyWindow];
+    // 延迟一个 runloop 后再 resign，避免 install 时机太早
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            if ([self.floatWindow respondsToSelector:@selector(resignKeyWindow)]) {
+                [self.floatWindow resignKeyWindow];
+            }
+        } @catch(NSException *e) {}
+    });
 
     if (@available(iOS 13.0, *)) {
         for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
@@ -692,27 +698,6 @@ static void AS_UpdateTrailView(void) {
 - (void)setPreferredFramesPerSecond:(NSInteger)preferredFramesPerSecond {
     if (gForce120FPSEnabled) {
         %orig(120);
-    } else {
-        %orig;
-    }
-}
-
-- (void)setPreferredFrameRateRange:(id)range {
-    if (!gForce120FPSEnabled) {
-        %orig;
-        return;
-    }
-    Class cls = NSClassFromString(@"CAFrameRateRange");
-    if (!cls) {
-        %orig;
-        return;
-    }
-    id r = [[cls alloc] init];
-    if ([r respondsToSelector:NSSelectorFromString(@"setMinimum:")]) {
-        [r setValue:@(120) forKey:@"minimum"];
-        [r setValue:@(120) forKey:@"maximum"];
-        [r setValue:@(120) forKey:@"preferred"];
-        %orig(r);
     } else {
         %orig;
     }
