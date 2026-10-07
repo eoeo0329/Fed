@@ -158,6 +158,27 @@ static void AS_UpdateTrailView(void) {
     }
 }
 
+#pragma mark - 穿透触摸视图
+
+@interface EOEPassthroughView : UIView
+@property (nonatomic, weak) UIView *floatView;
+@property (nonatomic, weak) UIView *panelView;
+@property (nonatomic, assign) BOOL panelExpanded;
+@end
+
+@implementation EOEPassthroughView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    if (self.panelExpanded) {
+        UIView *hit = [super hitTest:point withEvent:event];
+        return hit;
+    }
+    if (self.floatView && CGRectContainsPoint(self.floatView.frame, point)) {
+        return [super hitTest:point withEvent:event];
+    }
+    return nil;
+}
+@end
+
 #pragma mark - eoeo 悬浮窗
 
 @interface EOEOFloatingView : UIView
@@ -233,7 +254,7 @@ static void AS_UpdateTrailView(void) {
 
 @interface AdSkipManager : NSObject
 @property (nonatomic, strong) UIWindow *floatWindow;
-@property (nonatomic, strong) UIView *rootView;
+@property (nonatomic, strong) EOEPassthroughView *rootView;
 @property (nonatomic, strong) EOEOFloatingView *floatView;
 @property (nonatomic, strong) UIView *panelView;
 @property (nonatomic, strong) UIView *dimmerView;
@@ -263,25 +284,29 @@ static void AS_UpdateTrailView(void) {
     UIWindow *keyWin = AS_KeyWindow();
     CGRect bounds = keyWin ? keyWin.bounds : [UIScreen mainScreen].bounds;
 
-    CGFloat fw = 68, fh = 28;
-    CGRect btnFrame = CGRectMake(bounds.size.width - fw - 14, bounds.size.height/2 - fh/2, fw, fh);
-
-    self.floatWindow = [[UIWindow alloc] initWithFrame:btnFrame];
+    self.floatWindow = [[UIWindow alloc] initWithFrame:bounds];
     self.floatWindow.windowLevel = UIWindowLevelAlert + 2000;
     self.floatWindow.backgroundColor = [UIColor clearColor];
 
     UIViewController *vc = [[UIViewController alloc] init];
-    self.rootView = [[UIView alloc] initWithFrame:self.floatWindow.bounds];
+    self.rootView = [[EOEPassthroughView alloc] initWithFrame:bounds];
     self.rootView.backgroundColor = [UIColor clearColor];
     vc.view = self.rootView;
     self.floatWindow.rootViewController = vc;
 
-    self.floatView = [[EOEOFloatingView alloc] initWithFrame:self.rootView.bounds];
+    CGFloat fw = 68, fh = 28;
+    self.floatView = [[EOEOFloatingView alloc] initWithFrame:CGRectMake(bounds.size.width - fw - 14,
+                                                                        bounds.size.height/2 - fh/2,
+                                                                        fw, fh)];
     __weak typeof(self) weakSelf = self;
     self.floatView.onTap = ^{ [weakSelf togglePanel]; };
     [self.rootView addSubview:self.floatView];
+    self.rootView.floatView = self.floatView;
 
     self.floatWindow.hidden = NO;
+    // 关键：不让浮窗抢 keyWindow，保持事件正常流向应用
+    [self.floatWindow resignKeyWindow];
+
     if (@available(iOS 13.0, *)) {
         for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
             if (s.activationState == UISceneActivationStateForegroundActive && [s isKindOfClass:[UIWindowScene class]]) {
@@ -292,32 +317,15 @@ static void AS_UpdateTrailView(void) {
     }
 }
 
-- (void)expandWindowToFullScreen {
-    UIWindow *keyWin = AS_KeyWindow();
-    CGRect bounds = keyWin ? keyWin.bounds : [UIScreen mainScreen].bounds;
-    CGPoint btnOrigin = self.floatWindow.frame.origin;
-    self.floatWindow.frame = bounds;
-    self.rootView.frame = bounds;
-    self.floatView.frame = CGRectMake(btnOrigin.x, btnOrigin.y, self.floatView.frame.size.width, self.floatView.frame.size.height);
-}
-
-- (void)shrinkWindowToButton {
-    CGRect f = self.floatView.frame;
-    self.floatWindow.frame = f;
-    self.rootView.frame = self.floatWindow.bounds;
-    self.floatView.frame = self.rootView.bounds;
-}
-
 - (void)togglePanel {
     if (self.panelExpanded) {
         [self dismissPanel];
         return;
     }
     self.panelExpanded = YES;
-    [self expandWindowToFullScreen];
+    self.rootView.panelExpanded = YES;
 
-    UIWindow *keyWin = AS_KeyWindow();
-    CGRect bounds = keyWin.bounds;
+    CGRect bounds = self.floatWindow.bounds;
 
     self.dimmerView = [[UIView alloc] initWithFrame:bounds];
     self.dimmerView.backgroundColor = [UIColor colorWithWhite:0 alpha:0.35];
@@ -337,6 +345,7 @@ static void AS_UpdateTrailView(void) {
     self.panelView.layer.shadowOffset = CGSizeMake(0, 8);
     self.panelView.layer.shadowRadius = 24;
     [self.rootView addSubview:self.panelView];
+    self.rootView.panelView = self.panelView;
 
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(20, 22, cardW-40, 24)];
     title.text = @"eoeo";
@@ -529,7 +538,7 @@ static void AS_UpdateTrailView(void) {
         self.panelView = nil;
         self.dimmerView = nil;
         self.panelExpanded = NO;
-        [self shrinkWindowToButton];
+        self.rootView.panelExpanded = NO;
     }];
 }
 
