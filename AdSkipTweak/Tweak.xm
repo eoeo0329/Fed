@@ -1,18 +1,12 @@
 #import <UIKit/UIKit.h>
 #import <AVFoundation/AVFoundation.h>
-#import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 
 #pragma mark - 全局开关（开启后持续生效）
 
-static BOOL   gSkipAdEnabled      = NO;
-static BOOL   gCustomSpeedEnabled = NO;
-static float  gCustomSpeedValue   = 1.0f;
-static BOOL   gAdBlockEnabled     = NO;
-static BOOL   gBlockShakeEnabled  = NO;
-static BOOL   gTouchTrailEnabled  = NO;
-static BOOL   gForce120FPSEnabled = NO;
+static BOOL gSkipAdEnabled  = NO;   // 跳过激励广告
+static BOOL gSpeedAdEnabled = NO;   // 广告加速
 
 #define kEOEOBlue [UIColor colorWithRed:0.00 green:0.48 blue:1.00 alpha:1.0]
 
@@ -84,80 +78,7 @@ static void AS_GrantRewardForAd(UIViewController *vc) {
     }
 }
 
-static void AS_ClearAdCache(void) {
-    @try {
-        [[NSURLCache sharedURLCache] removeAllCachedResponses];
-        NSHTTPCookieStorage *cs = [NSHTTPCookieStorage sharedHTTPCookieStorage];
-        for (NSHTTPCookie *c in [cs cookies]) {
-            NSString *d = c.domain.lowercaseString;
-            if ([d containsString:@"ad"] || [d containsString:@"doubleclick"] ||
-                [d containsString:@"admob"] || [d containsString:@"googleadservices"] ||
-                [d containsString:@"unityads"] || [d containsString:@"applovin"] ||
-                [d containsString:@"ironsrc"] || [d containsString:@"vungle"]) {
-                [cs deleteCookie:c];
-            }
-        }
-    } @catch(NSException *e) {}
-}
-
-#pragma mark - 触摸轨迹视图
-
-@interface AOTouchTrailView : UIView
-@property (nonatomic, strong) NSMutableArray<NSValue *> *points;
-- (void)addPoint:(CGPoint)p;
-@end
-
-@implementation AOTouchTrailView
-- (instancetype)initWithFrame:(CGRect)frame {
-    self = [super initWithFrame:frame];
-    if (self) {
-        self.backgroundColor = [UIColor clearColor];
-        self.points = [NSMutableArray array];
-        self.userInteractionEnabled = NO;
-    }
-    return self;
-}
-- (void)addPoint:(CGPoint)p {
-    [self.points addObject:[NSValue valueWithCGPoint:p]];
-    if (self.points.count > 40) [self.points removeObjectAtIndex:0];
-    [self setNeedsDisplay];
-}
-- (void)drawRect:(CGRect)rect {
-    if (self.points.count < 2) return;
-    CGContextRef ctx = UIGraphicsGetCurrentContext();
-    CGContextSetStrokeColorWithColor(ctx, kEOEOBlue.CGColor);
-    CGContextSetLineWidth(ctx, 3);
-    CGContextSetLineCap(ctx, kCGLineCapRound);
-    for (NSInteger i = 1; i < self.points.count; i++) {
-        CGPoint a = [self.points[i-1] CGPointValue];
-        CGPoint b = [self.points[i] CGPointValue];
-        CGFloat alpha = (CGFloat)i / (CGFloat)self.points.count;
-        CGContextSetAlpha(ctx, alpha);
-        CGContextMoveToPoint(ctx, a.x, a.y);
-        CGContextAddLineToPoint(ctx, b.x, b.y);
-        CGContextStrokePath(ctx);
-    }
-}
-@end
-
-static AOTouchTrailView *gTrailView = nil;
-
-static void AS_UpdateTrailView(void) {
-    UIWindow *keyWin = AS_KeyWindow();
-    if (!keyWin) return;
-    if (gTouchTrailEnabled) {
-        if (!gTrailView) {
-            gTrailView = [[AOTouchTrailView alloc] initWithFrame:keyWin.bounds];
-            gTrailView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        }
-        [keyWin addSubview:gTrailView];
-    } else {
-        [gTrailView removeFromSuperview];
-        gTrailView = nil;
-    }
-}
-
-#pragma mark - eoeo 悬浮窗
+#pragma mark - eoeo 悬浮窗（可拖动的药丸）
 
 @interface EOEOFloatingView : UIView
 @property (nonatomic, copy) void(^onTap)(void);
@@ -299,7 +220,7 @@ static void AS_UpdateTrailView(void) {
     [self.floatWindow.rootViewController.view addSubview:self.dimmerView];
 
     CGFloat cardW = MIN(bounds.size.width - 40, 340);
-    CGFloat cardH = 500;
+    CGFloat cardH = 200;
     self.panelView = [[UIView alloc] initWithFrame:CGRectMake((bounds.size.width-cardW)/2,
                                                               (bounds.size.height-cardH)/2,
                                                               cardW, cardH)];
@@ -318,7 +239,7 @@ static void AS_UpdateTrailView(void) {
     [self.panelView addSubview:title];
 
     UILabel *subtitle = [[UILabel alloc] initWithFrame:CGRectMake(20, 48, cardW-40, 18)];
-    subtitle.text = @"通用工具箱";
+    subtitle.text = @"广告控制";
     subtitle.textColor = [UIColor colorWithWhite:0.45 alpha:1.0];
     subtitle.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
     [self.panelView addSubview:subtitle];
@@ -331,47 +252,13 @@ static void AS_UpdateTrailView(void) {
     [doneBtn addTarget:self action:@selector(dismissPanel) forControlEvents:UIControlEventTouchUpInside];
     [self.panelView addSubview:doneBtn];
 
-    NSArray *switchRows = @[
+    NSArray *rows = @[
         @{@"title": @"跳过激励广告", @"desc": @"自动关闭并发放奖励"},
-        @{@"title": @"更新广告屏蔽", @"desc": @"清除广告缓存并拦截"},
-        @{@"title": @"禁用摇广", @"desc": @"屏蔽摇一摇触发广告"},
-        @{@"title": @"触摸轨迹", @"desc": @"显示手指滑动轨迹"},
-        @{@"title": @"120帧率", @"desc": @"强制 120Hz 刷新率"},
+        @{@"title": @"广告加速", @"desc": @"所有播放器 x8 倍速"},
     ];
     CGFloat rowY = 84;
-
-    UIView *speedRow = [[UIView alloc] initWithFrame:CGRectMake(16, rowY, cardW-32, 72)];
-    speedRow.backgroundColor = [UIColor colorWithWhite:0.96 alpha:1.0];
-    speedRow.layer.cornerRadius = 12;
-
-    UILabel *st = [[UILabel alloc] initWithFrame:CGRectMake(14, 10, 120, 20)];
-    st.text = @"自定义速度";
-    st.textColor = [UIColor colorWithWhite:0.1 alpha:1.0];
-    st.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-    [speedRow addSubview:st];
-
-    UILabel *sVal = [[UILabel alloc] initWithFrame:CGRectMake(cardW-32-80, 10, 66, 20)];
-    sVal.text = [NSString stringWithFormat:@"x%.1f", gCustomSpeedValue];
-    sVal.textColor = kEOEOBlue;
-    sVal.font = [UIFont systemFontOfSize:15 weight:UIFontWeightBold];
-    sVal.textAlignment = NSTextAlignmentRight;
-    sVal.tag = 3001;
-    [speedRow addSubview:sVal];
-
-    UISlider *slider = [[UISlider alloc] initWithFrame:CGRectMake(14, 40, cardW-32-28, 20)];
-    slider.minimumValue = 1.0;
-    slider.maximumValue = 50.0;
-    slider.value = gCustomSpeedValue;
-    slider.minimumTrackTintColor = kEOEOBlue;
-    slider.tag = 3000;
-    [slider addTarget:self action:@selector(onSpeedChanged:) forControlEvents:UIControlEventValueChanged];
-    [speedRow addSubview:slider];
-
-    [self.panelView addSubview:speedRow];
-    rowY += 80;
-
-    for (NSInteger i = 0; i < switchRows.count; i++) {
-        NSDictionary *r = switchRows[i];
+    for (NSInteger i = 0; i < rows.count; i++) {
+        NSDictionary *r = rows[i];
         UIView *row = [[UIView alloc] initWithFrame:CGRectMake(16, rowY, cardW-32, 56)];
         row.backgroundColor = [UIColor colorWithWhite:0.96 alpha:1.0];
         row.layer.cornerRadius = 12;
@@ -391,13 +278,7 @@ static void AS_UpdateTrailView(void) {
         UISwitch *sw = [[UISwitch alloc] initWithFrame:CGRectMake(cardW-32-16-51, 12, 51, 31)];
         sw.onTintColor = kEOEOBlue;
         sw.tag = 2000 + i;
-        BOOL on = NO;
-        if (i == 0) on = gSkipAdEnabled;
-        else if (i == 1) on = gAdBlockEnabled;
-        else if (i == 2) on = gBlockShakeEnabled;
-        else if (i == 3) on = gTouchTrailEnabled;
-        else if (i == 4) on = gForce120FPSEnabled;
-        sw.on = on;
+        sw.on = (i == 0) ? gSkipAdEnabled : gSpeedAdEnabled;
         [sw addTarget:self action:@selector(onSwitchChanged:) forControlEvents:UIControlEventValueChanged];
         [row addSubview:sw];
 
@@ -406,42 +287,16 @@ static void AS_UpdateTrailView(void) {
     }
 }
 
-- (void)onSpeedChanged:(UISlider *)slider {
-    gCustomSpeedValue = roundf(slider.value);
-    slider.value = gCustomSpeedValue;
-    gCustomSpeedEnabled = (gCustomSpeedValue > 1.0f);
-    UILabel *val = (UILabel *)[self.panelView viewWithTag:3001];
-    val.text = [NSString stringWithFormat:@"x%.1f", gCustomSpeedValue];
-    if (gCustomSpeedEnabled) [self speedUpAllPlayersNow];
-}
-
 - (void)onSwitchChanged:(UISwitch *)sw {
     NSInteger i = sw.tag - 2000;
     if (i == 0) {
         gSkipAdEnabled = sw.isOn;
         [self toast:gSkipAdEnabled ? @"已开启：自动跳过激励广告" : @"已关闭：跳过激励广告"];
         if (gSkipAdEnabled) [self dismissAllAdsNow];
-    } else if (i == 1) {
-        gAdBlockEnabled = sw.isOn;
-        [self toast:gAdBlockEnabled ? @"已开启：更新广告屏蔽" : @"已关闭：更新广告屏蔽"];
-        if (gAdBlockEnabled) { AS_ClearAdCache(); [self dismissAllAdsNow]; }
-    } else if (i == 2) {
-        gBlockShakeEnabled = sw.isOn;
-        [self toast:gBlockShakeEnabled ? @"已开启：禁用摇广" : @"已关闭：禁用摇广"];
-    } else if (i == 3) {
-        gTouchTrailEnabled = sw.isOn;
-        [self toast:gTouchTrailEnabled ? @"已开启：触摸轨迹" : @"已关闭：触摸轨迹"];
-        AS_UpdateTrailView();
-    } else if (i == 4) {
-        gForce120FPSEnabled = sw.isOn;
-        [self toast:gForce120FPSEnabled ? @"已开启：120帧率" : @"已关闭：120帧率"];
-        if (gForce120FPSEnabled) [self apply120FPS];
-    }
-}
-
-- (void)apply120FPS {
-    for (UIWindow *w in AS_AllWindows()) {
-        @try { [w setValue:@(120) forKey:@"maximumFramesPerSecond"]; } @catch(NSException *e) {}
+    } else {
+        gSpeedAdEnabled = sw.isOn;
+        [self toast:gSpeedAdEnabled ? @"已开启：广告加速 x8" : @"已关闭：广告加速"];
+        if (gSpeedAdEnabled) [self speedUpAllPlayersNow];
     }
 }
 
@@ -481,7 +336,7 @@ static void AS_UpdateTrailView(void) {
     if (!view) return;
     if ([view isKindOfClass:NSClassFromString(@"AVPlayerLayer")]) {
         AVPlayerLayer *layer = (AVPlayerLayer *)view.layer;
-        if (layer.player) layer.player.rate = gCustomSpeedValue;
+        if (layer.player) layer.player.rate = 8.0;
     }
     for (UIView *sub in view.subviews) [self speedUpPlayersInView:sub];
 }
@@ -532,8 +387,8 @@ static void AS_UpdateTrailView(void) {
 %hook AVPlayer
 
 - (void)setRate:(float)rate {
-    if (gCustomSpeedEnabled) {
-        %orig(gCustomSpeedValue);
+    if (gSpeedAdEnabled) {
+        %orig(8.0);
     } else {
         %orig;
     }
@@ -541,75 +396,8 @@ static void AS_UpdateTrailView(void) {
 
 - (void)play {
     %orig;
-    if (gCustomSpeedEnabled) {
-        self.rate = gCustomSpeedValue;
-    }
-}
-
-%end
-
-#pragma mark - 全局 Hook：禁用摇广 + 触摸轨迹 + 广告屏蔽拦截
-
-%hook UIWindow
-
-- (void)sendEvent:(UIEvent *)event {
-    if (event.type == UIEventTypeMotion && gBlockShakeEnabled) {
-        return;
-    }
-    if (gTouchTrailEnabled && event.type == UIEventTypeTouches) {
-        UITouch *t = [[event allTouches] anyObject];
-        if (t && gTrailView) {
-            CGPoint p = [t locationInView:gTrailView];
-            if (t.phase == UITouchPhaseEnded || t.phase == UITouchPhaseCancelled) {
-                [gTrailView.points removeAllObjects];
-                [gTrailView setNeedsDisplay];
-            } else {
-                [gTrailView addPoint:p];
-            }
-        }
-    }
-    %orig;
-}
-
-%end
-
-%hook UIResponder
-
-- (void)motionBegan:(UIEventSubtype)motion withEvent:(UIEvent *)event {
-    if (gBlockShakeEnabled) return;
-    %orig;
-}
-
-- (void)motionEnded:(UIEventSubtype)motion withEvent:(UIEvent *)event {
-    if (gBlockShakeEnabled) return;
-    %orig;
-}
-
-- (void)motionCancelled:(UIEventSubtype)motion withEvent:(UIEvent *)event {
-    if (gBlockShakeEnabled) return;
-    %orig;
-}
-
-%end
-
-#pragma mark - 全局 Hook：120 帧率
-
-%hook UIWindow
-
-- (NSInteger)maximumFramesPerSecond {
-    if (gForce120FPSEnabled) return 120;
-    return %orig;
-}
-
-%end
-
-%hook CADisplayLink
-
-- (void)setPreferredFramesPerSecond:(NSInteger)preferredFramesPerSecond {
-    if (gForce120FPSEnabled) {
-        %orig(120);
-    } else {
-        %orig;
+    if (gSpeedAdEnabled) {
+        self.rate = 8.0;
     }
 }
 
